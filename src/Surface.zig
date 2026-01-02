@@ -327,6 +327,7 @@ const DerivedConfig = struct {
     window_width: u32,
     title: ?[:0]const u8,
     title_report: bool,
+    allow_font_ops: bool,
     links: []Link,
     link_previews: configpkg.LinkPreviews,
     scroll_to_bottom: configpkg.Config.ScrollToBottom,
@@ -402,6 +403,7 @@ const DerivedConfig = struct {
             .window_width = config.@"window-width",
             .title = config.title,
             .title_report = config.@"title-report",
+            .allow_font_ops = config.@"allow-font-ops",
             .links = links,
             .link_previews = config.@"link-previews",
             .scroll_to_bottom = config.@"scroll-to-bottom",
@@ -1018,6 +1020,29 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
                 .mouse_shape,
                 shape,
             );
+        },
+
+        .set_font => |*font_req| {
+            if (!self.config.allow_font_ops) {
+                log.debug("OSC 50: font operations disabled by config", .{});
+                return;
+            }
+            const font_name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&font_req.family)), 0);
+            log.debug("OSC 50: set font request: \"{s}\" size={d}", .{ font_name, font_req.size });
+            self.setFontFromOSC50(font_name, font_req.size) catch |err| {
+                log.warn("OSC 50: failed to set font: {}", .{err});
+            };
+        },
+
+        .font_query => |terminator| {
+            if (!self.config.allow_font_ops) {
+                log.debug("OSC 50: font operations disabled by config", .{});
+                return;
+            }
+            log.debug("OSC 50: font query request", .{});
+            self.respondFontQuery(terminator) catch |err| {
+                log.warn("OSC 50: failed to respond to font query: {}", .{err});
+            };
         },
 
         .clipboard_read => |clipboard| {
@@ -2434,6 +2459,100 @@ pub fn setFontSize(self: *Surface, size: font.face.DesiredSize) !void {
 /// practical.
 fn queueRender(self: *Surface) !void {
     try self.renderer_thread.wakeup.notify();
+}
+
+/// Change the font family and/or size at runtime via OSC 50.
+/// font_name: empty string means don't change family
+/// size_points: 0 means don't change size
+fn setFontFromOSC50(self: *Surface, font_name: []const u8, size_points: f32) !void {
+    const change_family = font_name.len > 0;
+    const change_size = size_points > 0;
+
+    if (!change_family and !change_size) {
+        log.warn("OSC 50: no font changes specified, ignoring", .{});
+        return;
+    }
+
+    log.info("OSC 50: setting font family=\"{s}\" size={d}", .{ font_name, size_points });
+
+    // Determine the new font size
+    var new_font_size = self.font_size;
+    if (change_size) {
+        new_font_size.points = std.math.clamp(size_points, 1.0, 255.0);
+    }
+
+    // If only changing size (no family change), use the simpler path
+    if (!change_family) {
+        try self.setFontSize(new_font_size);
+        self.font_size_adjusted = true;
+        return;
+    }
+
+    // Create a new font config by cloning the current one
+    var new_font_config = try font.SharedGridSet.DerivedConfig.init(self.alloc, &self.config.font);
+    errdefer new_font_config.deinit();
+
+    // Clear the font family list and add the new font
+    new_font_config.@"font-family".list.clearRetainingCapacity();
+    const font_name_copy = try new_font_config.arena.allocator().dupeZ(u8, font_name);
+    try new_font_config.@"font-family".list.append(new_font_config.arena.allocator(), font_name_copy);
+
+    // Get new font grid with the updated config and size
+    const font_grid_key, const font_grid = try self.app.font_grid_set.ref(
+        &new_font_config,
+        new_font_size,
+    );
+    errdefer self.app.font_grid_set.deref(font_grid_key);
+
+    // Update cell size
+    try self.setCellSize(.{
+        .width = font_grid.metrics.cell_width,
+        .height = font_grid.metrics.cell_height,
+    });
+
+    // Replace old font config with new one
+    self.config.font.deinit();
+    self.config.font = new_font_config;
+
+    // Update font size if changed
+    if (change_size) {
+        self.font_size = new_font_size;
+        self.font_size_adjusted = true;
+    }
+
+    // Notify renderer thread
+    _ = self.renderer_thread.mailbox.push(.{
+        .font_grid = .{
+            .grid = font_grid,
+            .set = &self.app.font_grid_set,
+            .old_key = self.font_grid_key,
+            .new_key = font_grid_key,
+        },
+    }, .{ .forever = {} });
+
+    self.font_grid_key = font_grid_key;
+    self.font_metrics = font_grid.metrics;
+
+    self.queueRender() catch unreachable;
+}
+
+/// Respond to OSC 50;? query with current font family and size
+fn respondFontQuery(self: *Surface, terminator: terminal.osc.Terminator) !void {
+    // Get current font family from config
+    const families = self.config.font.@"font-family".list.items;
+    const font_name: []const u8 = if (families.len > 0) families[0] else "";
+    const font_size_pts = self.font_size.points;
+
+    // Format response: OSC 50 ; <font-name>:size=<size> <terminator>
+    var buf: [300]u8 = undefined;
+    const response = std.fmt.bufPrint(&buf, "\x1b]50;{s}:size={d:.1}{s}", .{
+        font_name,
+        font_size_pts,
+        terminator.string(),
+    }) catch return;
+
+    // Send to pty
+    self.queueIo(try termio.Message.writeReq(self.alloc, response), .unlocked);
 }
 
 pub fn sizeCallback(self: *Surface, size: apprt.SurfaceSize) !void {

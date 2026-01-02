@@ -2211,6 +2211,11 @@ keybind: Keybinds = .{},
 /// Available since: 1.0.1
 @"title-report": bool = false,
 
+/// Enables or disables OSC 50 font operations. This escape sequence allows
+/// running programs to set or query the terminal font. When disabled, OSC 50
+/// sequences are silently ignored.
+@"allow-font-ops": bool = true,
+
 /// The total amount of bytes that can be used for image data (e.g. the Kitty
 /// image protocol) per terminal screen. The maximum value is 4,294,967,295
 /// (4GiB). The default is 320MB. If this is set to zero, then all image

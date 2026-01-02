@@ -28,6 +28,17 @@ pub const Message = union(enum) {
     /// Set the mouse shape.
     set_mouse_shape: terminal.MouseShape,
 
+    /// Set the font family and/or size via OSC 50.
+    set_font: struct {
+        /// Font family name (empty string means don't change)
+        family: [256:0]u8,
+        /// Font size in points (0 means don't change)
+        size: f32 = 0,
+    },
+
+    /// Query the current font (OSC 50;?)
+    font_query: terminal.osc.Terminator,
+
     /// Read the clipboard and write to the pty.
     clipboard_read: apprt.Clipboard,
 

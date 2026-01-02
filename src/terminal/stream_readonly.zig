@@ -165,6 +165,9 @@ pub const Handler = struct {
             .color_operation => try self.colorOperation(value.op, &value.requests),
             .kitty_color_report => try self.kittyColorOperation(value),
 
+            // OSC 50 font changes don't affect terminal state
+            .set_font => {},
+
             // No supported DCS commands have any terminal-modifying effects,
             // but they may in the future. For now we just ignore it.
             .dcs_hook,

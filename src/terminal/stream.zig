@@ -126,6 +126,7 @@ pub const Action = union(Key) {
     prompt_continuation: PromptContinuation,
     end_of_command: EndOfCommand,
     mouse_shape: MouseShape,
+    set_font: SetFont,
     configure_charset: ConfigureCharset,
     set_attribute: sgr.Attribute,
     kitty_color_report: kitty.color.OSC,
@@ -227,6 +228,7 @@ pub const Action = union(Key) {
             "prompt_continuation",
             "end_of_command",
             "mouse_shape",
+            "set_font",
             "configure_charset",
             "set_attribute",
             "kitty_color_report",
@@ -428,6 +430,23 @@ pub const Action = union(Key) {
         pub fn cval(self: EndOfCommand) EndOfCommand.C {
             return .{
                 .exit_code = if (self.exit_code) |code| @intCast(code) else -1,
+            };
+        }
+    };
+
+    pub const SetFont = struct {
+        value: []const u8,
+        terminator: osc.Terminator,
+
+        pub const C = extern struct {
+            value: lib.String,
+            terminator: osc.Terminator.C,
+        };
+
+        pub fn cval(self: SetFont) SetFont.C {
+            return .{
+                .value = .init(self.value),
+                .terminator = self.terminator.cval(),
             };
         }
     };
@@ -2063,6 +2082,13 @@ pub fn Stream(comptime Handler: type) type {
                     };
 
                     try self.handler.vt(.mouse_shape, shape);
+                },
+
+                .set_font => |v| {
+                    try self.handler.vt(.set_font, .{
+                        .value = v.value,
+                        .terminator = v.terminator,
+                    });
                 },
 
                 .color_operation => |v| {

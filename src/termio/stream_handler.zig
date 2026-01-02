@@ -326,6 +326,7 @@ pub const StreamHandler = struct {
             .prompt_continuation => self.promptContinuation(value.aid),
             .end_of_command => self.endOfCommand(value.exit_code),
             .mouse_shape => try self.setMouseShape(value),
+            .set_font => self.setFont(value.value, value.terminator),
             .configure_charset => self.configureCharset(value.slot, value.charset),
             .set_attribute => {
                 @branchHint(.likely);
@@ -1030,6 +1031,57 @@ pub const StreamHandler = struct {
 
         self.terminal.mouse_shape = shape;
         self.surfaceMessageWriter(.{ .set_mouse_shape = shape });
+    }
+
+    /// Handle OSC 50 - set or query font
+    /// Supports formats:
+    /// - "fontname" - set font family only
+    /// - "#14" - set size only (14pt)
+    /// - "fontname:size=14" - set both
+    /// - "fontname size=14" - set both (space separator)
+    /// - "?" - query current font
+    inline fn setFont(
+        self: *StreamHandler,
+        value: []const u8,
+        terminator: terminal.osc.Terminator,
+    ) void {
+        // Check if this is a query (OSC 50;?)
+        if (value.len == 1 and value[0] == '?') {
+            self.surfaceMessageWriter(.{ .font_query = terminator });
+            return;
+        }
+
+        var family_buf: [256:0]u8 = .{0} ** 256;
+        var font_size: f32 = 0;
+
+        // Check for size-only format: "#14"
+        if (value.len > 0 and value[0] == '#') {
+            font_size = std.fmt.parseFloat(f32, value[1..]) catch 0;
+        } else {
+            // Parse "fontname:size=14" or "fontname size=14" or just "fontname"
+            var font_name = value;
+
+            // Look for ":size=" or " size="
+            if (std.mem.indexOf(u8, value, ":size=")) |idx| {
+                font_name = value[0..idx];
+                const size_str = value[idx + 6 ..];
+                font_size = std.fmt.parseFloat(f32, size_str) catch 0;
+            } else if (std.mem.indexOf(u8, value, " size=")) |idx| {
+                font_name = value[0..idx];
+                const size_str = value[idx + 6 ..];
+                font_size = std.fmt.parseFloat(f32, size_str) catch 0;
+            }
+
+            // Copy font name
+            const len = @min(font_name.len, 255);
+            @memcpy(family_buf[0..len], font_name[0..len]);
+            family_buf[len] = 0;
+        }
+
+        self.surfaceMessageWriter(.{ .set_font = .{
+            .family = family_buf,
+            .size = font_size,
+        } });
     }
 
     fn clipboardContents(self: *StreamHandler, kind: u8, data: []const u8) !void {

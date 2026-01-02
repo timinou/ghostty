@@ -136,6 +136,13 @@ pub const Command = union(Key) {
         value: [:0]const u8,
     },
 
+    /// OSC 50. Set or query the terminal font (XTerm compatibility).
+    /// When value is "?" this is a query for the current font.
+    set_font: struct {
+        value: [:0]const u8,
+        terminator: Terminator = .st,
+    },
+
     /// OSC color operations to set, reset, or report color settings. Some OSCs
     /// allow multiple operations to be specified in a single OSC so we need a
     /// list-like datastructure to manage them. We use std.SegmentedList because
@@ -207,6 +214,7 @@ pub const Command = union(Key) {
             "clipboard_contents",
             "report_pwd",
             "mouse_shape",
+            "set_font",
             "color_operation",
             "kitty_color_protocol",
             "show_desktop_notification",
@@ -376,6 +384,7 @@ pub const Parser = struct {
         @"22",
         @"4",
         @"5",
+        @"50",
         @"52",
         @"7",
         @"77",
@@ -934,7 +943,19 @@ pub const Parser = struct {
                     self.buf_start = self.buf_idx;
                     self.complete = true;
                 },
+                '0' => self.state = .@"50",
                 '2' => self.state = .@"52",
+                else => self.state = .invalid,
+            },
+
+            .@"50" => switch (c) {
+                ';' => {
+                    self.command = .{ .set_font = .{ .value = undefined } };
+                    self.state = .string;
+                    self.temp_state = .{ .str = &self.command.set_font.value };
+                    self.buf_start = self.buf_idx;
+                    self.complete = true;
+                },
                 else => self.state = .invalid,
             },
 
@@ -1761,6 +1782,7 @@ pub const Parser = struct {
         switch (self.command) {
             .kitty_color_protocol => |*c| c.terminator = .init(terminator_ch),
             .color_operation => |*c| c.terminator = .init(terminator_ch),
+            .set_font => |*f| f.terminator = .init(terminator_ch),
             else => {},
         }
 
