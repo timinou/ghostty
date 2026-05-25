@@ -1,0 +1,149 @@
+# Maintainer: timinou <timinou@github>
+# Contributor: Ghostty OSC 50 fork
+
+pkgbase=ghostty-custom
+pkgname=(ghostty-custom ghostty-custom-shell-integration ghostty-custom-terminfo)
+pkgver=1.3.2
+pkgrel=1
+pkgdesc='Ghostty terminal emulator with OSC 50 dynamic font support'
+arch=(x86_64 aarch64)
+url="https://github.com/timinou/ghostty"
+license=(MIT)
+depends=(bzip2
+         fontconfig
+         freetype2
+         gcc-libs
+         glibc
+         glib2
+         gtk4
+         gtk4-layer-shell
+         libx11
+         harfbuzz
+         libadwaita
+         libpng
+         oniguruma
+         pixman
+         wayland
+         zlib)
+makedepends=(blueprint-compiler
+             pandoc-cli
+             zig)
+provides=(ghostty)
+conflicts=(ghostty)
+
+pkgver() {
+    cd "$srcdir"
+    git describe --tags --match 'v*' 2>/dev/null | sed 's/^v//;s/-/+/g' || echo "$pkgver"
+}
+
+prepare() {
+    cd "$srcdir"
+    # Ensure clean state: remove any cached zig artifacts
+    rm -rf .zig-cache zig-out
+}
+
+build() {
+    cd "$srcdir"
+    zig build \
+        --summary all \
+        --prefix /usr \
+        -Dapp-runtime=gtk \
+        -Doptimize=ReleaseFast \
+        -Dgtk-x11=true \
+        -Dpie=true \
+        -Demit-docs \
+        -Dversion-string="$pkgver"
+}
+
+package_ghostty-custom() {
+    depends+=(ghostty-custom-shell-integration
+              ghostty-custom-terminfo)
+    provides=(ghostty)
+    conflicts=(ghostty)
+
+    cd "$srcdir"
+
+    # Binary
+    install -Dm755 zig-out/bin/ghostty "$pkgdir/usr/bin/ghostty"
+
+    # Desktop file
+    install -Dm644 zig-out/share/applications/com.mitchellh.ghostty.desktop \
+        "$pkgdir/usr/share/applications/com.mitchellh.ghostty.desktop"
+
+    # Icons
+    for size in 16 32 48 128 256 512 1024; do
+        local icon="zig-out/share/icons/hicolor/${size}x${size}/apps/com.mitchellh.ghostty.png"
+        if [[ -f "$icon" ]]; then
+            install -Dm644 "$icon" \
+                "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/com.mitchellh.ghostty.png"
+        fi
+    done
+
+    # Metainfo
+    if [[ -f zig-out/share/metainfo/com.mitchellh.ghostty.metainfo.xml ]]; then
+        install -Dm644 zig-out/share/metainfo/com.mitchellh.ghostty.metainfo.xml \
+            "$pkgdir/usr/share/metainfo/com.mitchellh.ghostty.metainfo.xml"
+    fi
+
+    # Vim/Neovim integration
+    if [[ -d zig-out/share/vim ]]; then
+        cp -r zig-out/share/vim "$pkgdir/usr/share/"
+    fi
+    if [[ -d zig-out/share/nvim ]]; then
+        cp -r zig-out/share/nvim "$pkgdir/usr/share/"
+    fi
+
+    # Man pages
+    if [[ -d zig-out/share/man ]]; then
+        cp -r zig-out/share/man "$pkgdir/usr/share/"
+    fi
+
+    # Documentation
+    if [[ -d zig-out/share/ghostty ]]; then
+        mkdir -p "$pkgdir/usr/share/ghostty"
+        cp -r zig-out/share/ghostty/* "$pkgdir/usr/share/ghostty/"
+    fi
+
+    # License
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/ghostty-custom/LICENSE"
+}
+
+package_ghostty-custom-shell-integration() {
+    pkgdesc='Shell integration scripts for Ghostty (custom OSC 50 build)'
+    depends=()
+    provides=(ghostty-shell-integration)
+    conflicts=(ghostty-shell-integration)
+
+    cd "$srcdir"
+    if [[ -d zig-out/share/ghostty/shell-integration ]]; then
+        mkdir -p "$pkgdir/usr/share/ghostty"
+        cp -r zig-out/share/ghostty/shell-integration "$pkgdir/usr/share/ghostty/"
+    fi
+}
+
+package_ghostty-custom-terminfo() {
+    pkgdesc='Terminfo for Ghostty (custom OSC 50 build)'
+    depends=(ncurses)
+    provides=(ghostty-terminfo)
+    conflicts=(ghostty-terminfo)
+
+    cd "$srcdir"
+    if [[ -d zig-out/share/terminfo ]]; then
+        # Only install terminfo entries that ncurses does NOT already provide.
+        # Modern ncurses (>= 6.5) ships ghostty terminfo, so we skip those
+        # to avoid file conflicts.
+        mkdir -p "$pkgdir/usr/share/terminfo"
+        for termdir in zig-out/share/terminfo/*/; do
+            dirname=$(basename "$termdir")
+            mkdir -p "$pkgdir/usr/share/terminfo/$dirname"
+            for termfile in "$termdir"*; do
+                termname=$(basename "$termfile")
+                if [[ ! -f /usr/share/terminfo/$dirname/$termname ]]; then
+                    install -Dm644 "$termfile" "$pkgdir/usr/share/terminfo/$dirname/$termname"
+                fi
+            done
+        done
+        # If no terminfo files were installed, this is an empty package.
+        # That's OK — ncurses already provides them.
+    fi
+}
