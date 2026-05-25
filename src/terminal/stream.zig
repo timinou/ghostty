@@ -120,6 +120,7 @@ pub const Action = union(Key) {
     start_hyperlink: StartHyperlink,
     clipboard_contents: ClipboardContents,
     mouse_shape: MouseShape,
+    set_font: SetFont,
     configure_charset: ConfigureCharset,
     set_attribute: sgr.Attribute,
     kitty_color_report: kitty.color.OSC,
@@ -217,6 +218,7 @@ pub const Action = union(Key) {
             "start_hyperlink",
             "clipboard_contents",
             "mouse_shape",
+            "set_font",
             "configure_charset",
             "set_attribute",
             "kitty_color_report",
@@ -378,6 +380,64 @@ pub const Action = union(Key) {
             return .{
                 .kind = self.kind,
                 .data = .init(self.data),
+            };
+        }
+    };
+
+    pub const PromptStart = struct {
+        aid: ?[]const u8,
+        redraw: bool,
+
+        pub const C = extern struct {
+            aid: lib.String,
+            redraw: bool,
+        };
+
+        pub fn cval(self: PromptStart) PromptStart.C {
+            return .{
+                .aid = .init(self.aid orelse ""),
+                .redraw = self.redraw,
+            };
+        }
+    };
+
+    pub const PromptContinuation = struct {
+        aid: ?[]const u8,
+
+        pub const C = lib.String;
+
+        pub fn cval(self: PromptContinuation) PromptContinuation.C {
+            return .init(self.aid orelse "");
+        }
+    };
+
+    pub const EndOfCommand = struct {
+        exit_code: ?u8,
+
+        pub const C = extern struct {
+            exit_code: i16,
+        };
+
+        pub fn cval(self: EndOfCommand) EndOfCommand.C {
+            return .{
+                .exit_code = if (self.exit_code) |code| @intCast(code) else -1,
+            };
+        }
+    };
+
+    pub const SetFont = struct {
+        value: []const u8,
+        terminator: osc.Terminator,
+
+        pub const C = extern struct {
+            value: lib.String,
+            terminator: osc.Terminator.C,
+        };
+
+        pub fn cval(self: SetFont) SetFont.C {
+            return .{
+                .value = .init(self.value),
+                .terminator = self.terminator.cval(),
             };
         }
     };
@@ -2008,6 +2068,13 @@ pub fn Stream(comptime H: type) type {
                     };
 
                     self.handler.vt(.mouse_shape, shape);
+                },
+
+                .set_font => |v| {
+                    self.handler.vt(.set_font, .{
+                        .value = v.value,
+                        .terminator = v.terminator,
+                    });
                 },
 
                 .color_operation => |v| {

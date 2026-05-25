@@ -72,6 +72,13 @@ pub const Command = union(Key) {
         value: [:0]const u8,
     },
 
+    /// OSC 50. Set or query the terminal font (XTerm compatibility).
+    /// When value is "?" this is a query for the current font.
+    set_font: struct {
+        value: [:0]const u8,
+        terminator: Terminator = .st,
+    },
+
     /// OSC color operations to set, reset, or report color settings. Some OSCs
     /// allow multiple operations to be specified in a single OSC so we need a
     /// list-like datastructure to manage them. We use std.SegmentedList because
@@ -175,6 +182,7 @@ pub const Command = union(Key) {
             "clipboard_contents",
             "report_pwd",
             "mouse_shape",
+            "set_font",
             "color_operation",
             "kitty_color_protocol",
             "show_desktop_notification",
@@ -341,6 +349,7 @@ pub const Parser = struct {
         @"19",
         @"21",
         @"22",
+        @"50",
         @"52",
         @"55",
         @"66",
@@ -418,6 +427,7 @@ pub const Parser = struct {
             .mouse_shape,
             .report_pwd,
             .semantic_prompt,
+            .set_font,
             .show_desktop_notification,
             .kitty_text_sizing,
             .kitty_clipboard_protocol,
@@ -667,6 +677,7 @@ pub const Parser = struct {
 
             .@"5" => switch (c) {
                 ';' => if (self.ensureAllocator()) self.captureTrailing(.fixed),
+                '0' => self.state = .@"50",
                 '2' => self.state = .@"52",
                 '5' => self.state = .@"55",
                 else => self.state = .invalid,
@@ -674,6 +685,11 @@ pub const Parser = struct {
 
             .@"6" => switch (c) {
                 '6' => self.state = .@"66",
+                else => self.state = .invalid,
+            },
+
+            .@"50" => switch (c) {
+                ';' => self.captureTrailing(.fixed),
                 else => self.state = .invalid,
             },
 
@@ -783,6 +799,8 @@ pub const Parser = struct {
             .@"7" => parsers.report_pwd.parse(self, terminator_ch),
 
             .@"8" => parsers.hyperlink.parse(self, terminator_ch),
+
+            .@"50" => parsers.set_font.parse(self, terminator_ch),
 
             .@"9" => parsers.osc9.parse(self, terminator_ch),
 
